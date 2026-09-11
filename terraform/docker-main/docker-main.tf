@@ -14,7 +14,7 @@ variable "stu_name" {
   description = "name"
 
   validation {
-    condition = can(regex("^[a-z]{2,10}$", var.student_name))
+    condition = can(regex("^[a-z]{2,10}$", var.stu_name))
     error_message = "Student name must be 2-10 lowercase letters."
   }
 }
@@ -30,15 +30,15 @@ resource "docker_image" "nginx" {
 }
 
 resource "docker_network" "lan" {
-  name = "${var.student_name}-sys350-lan"
+  name = "${var.stu_name}-sys350-lan"
 }
 
 resource "docker_volume" "web_data" {
-  name = "${var.student_name}-nginx-html"
+  name = "${var.stu_name}-nginx-html"
 }
 
 resource "docker_container" "web_server" {
-  name  = "${var.student_name}-web-server"
+  name  = "${var.stu_name}-web-server"
   image = docker_image.nginx.image_id
 
   ports {

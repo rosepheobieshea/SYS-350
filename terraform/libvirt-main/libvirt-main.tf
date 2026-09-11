@@ -24,7 +24,7 @@ variable "stu_name" {
 variable "vm_memory" {
   description = "VM memory in KiB"
   type        = number
-  default     = 1048576  # 1 GB
+  default     = 1048576 # 1 GB
 }
 
 variable "vm_vcpu" {
@@ -99,7 +99,7 @@ resource "libvirt_volume" "ubuntu_base" {
 resource "libvirt_volume" "ubuntu_disk" {
   name     = "${var.stu_name}-ubuntu-server.qcow2"
   pool     = libvirt_pool.default.name
-  capacity = 42949672960  # 40 GB
+  capacity = 42949672960 # 40 GB
 
   target = {
     format = {
@@ -138,7 +138,7 @@ resource "libvirt_domain" "ubuntu_server" {
           }
         }
         target = {
-          bus  = "virtio"
+          bus = "virtio"
           dev = "vda"
         }
         driver = {
