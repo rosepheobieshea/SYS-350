@@ -57,17 +57,17 @@ resource "terraform_data" "disk" {
   }
 }
 
-resource "libvirt_network" "lab_net" {
-  name = "lab-network"
-  mode = "nat"
-  domain = "lab.local"
-
-  addresses = ["192.168.144.0/24"]
-
-  dhcp {
-    enabled = true
-  }
-}
+# resource "libvirt_network" "lab_net" {
+#   name = "lab-network"
+#   mode = "nat"
+#    domain = "lab.local"
+#
+#    addresses = ["192.168.144.0/24"]
+#
+#   dhcp {
+#    enabled = true
+#  }
+# }
 
 resource "libvirt_domain" "ubuntu_server" {
   name        = "${var.student_name}-${var.vm_name}"
@@ -113,19 +113,19 @@ resource "libvirt_domain" "ubuntu_server" {
       }
     ]
 
-    interfaces = [
-      {
-        source = {
-          network = {
-            network = "libvirt_network.lab_net.name"
-          }
-        }
-
-        model = {
-          type = "e1000e"
-        }
-      }
-    ]
+    #    interfaces = [
+    # {
+    #   source = {
+    #     network = {
+    #       network = "libvirt_network.lab_net.name"
+    #     }
+    #   }
+    #
+    #   model = {
+    #     type = "e1000e"
+    #   }
+    # }
+    # ]
 
     graphics = [
       {
