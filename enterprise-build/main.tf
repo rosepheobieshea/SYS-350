@@ -96,7 +96,7 @@ variable "win_server_image_path" {
 variable "win11_image_path" {
   description = "Path to the golden Windows 11 qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/orig/aliyah-win11.qcow2"
+  default     = "/opt/images/orig/win11.qcow2"
 }
 
 locals {
@@ -185,3 +185,23 @@ resource "docker_container" "service" {
   restart = "unless-stopped"
 }
 
+resource "libvirt_network" "corp" {
+  name      = "${var.student_name}-corp-lan"
+  autostart = true
+
+  forward = {
+    mode = "nat"
+  }
+
+  ips = [{
+    address = "192.168.${var.corp_octet}.1"
+    prefix  = 24
+    family  = "ipv4"
+    dhcp = {
+      ranges = [{
+        start = "192.168.${var.corp_octet}.100"
+        end   = "192.168.${var.corp_octet}.254"
+      }]
+    }
+  }]
+}
