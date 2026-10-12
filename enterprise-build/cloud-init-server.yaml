@@ -1,13 +1,31 @@
+#cloud-config
+hostname: ${hostname}
+fqdn: ${hostname}.local
+
 users:
   - default
   - name: ${student_name}
+    gecos: "Student User"
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    groups: users, admin
+    shell: /bin/bash
     lock_passwd: false
-    hashed_passwd: $6$4EK5VZE.xSgMAgt6$TDDi5nfTxwQi4G4K3AnIYJfzR7b6Jj6CG7RvA8.UN2MdUVfPBKIJyePTLzcYeghPucMQFQjvxf1tr5FEHsvyg. 
+    hashed_passwd: $6$4EK5VZE.xSgMAgt6$TDDi5nfTxwQi4G4K3AnIYJfzR7b6Jj6CG7RvA8.UN2MdUVfPBKIJyePTLzcYeghPucMQFQjvxf1tr5FEHsvyg.
     ssh_authorized_keys:
       - ${ssh_public_key}
 
-  ssh_pwauth: true
+ssh_pwauth: true
 
-  runcmd:
-    - echo '$6$4EK5VZE.xSgMAgt6$TDDi5nfTxwQi4G4K3AnIYJfzR7b6Jj6CG7RvA8.UN2MdUVfPBKIJyePTLzcYeghPucMQFQjvxf1tr5FEHsvyg.' | chpasswd -e
-    - systemctl restart sshd
+package_update: true
+packages:
+  - openssh-server
+  - curl
+  - wget
+  - vim
+  - git
+  - net-tools
+
+runcmd:
+  - echo 'root:$6$4EK5VZE.xSgMAgt6$TDDi5nfTxwQi4G4K3AnIYJfzR7b6Jj6CG7RvA8.UN2MdUVfPBKIJyePTLzcYeghPucMQFQjvxf1tr5FEHsvyg.' | chpasswd -e
+  - systemctl restart sshd
+  - echo "${hostname} - SYS-350 Enterprise VM" > /etc/motd
