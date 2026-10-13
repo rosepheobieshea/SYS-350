@@ -90,13 +90,13 @@ variable "cloud_image_path" {
 variable "win_server_image_path" {
   description = "Path to the golden Windows Server qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/orig/windows-server-2022.qcow2"
+  default     = "/opt/images/win2k25.qcow2"
 }
 
 variable "win11_image_path" {
   description = "Path to the golden Windows 11 qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/orig/win11.qcow2"
+  default     = "/opt/images/win11.qcow2"
 }
 
 locals {
