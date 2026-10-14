@@ -1,3 +1,5 @@
+# main.tf: SYS-350 Enterprise Build, Part I (complete reference)
+
 terraform {
   required_providers {
     docker = {
@@ -24,7 +26,7 @@ provider "libvirt" {
 
 variable "student_name" {
   type        = string
-  description = "seems pretty obvious"
+  description = "Your student identifier (e.g., jsmith, mgarcia)"
 
   validation {
     condition     = can(regex("^[a-z]{2,10}$", var.student_name))
@@ -90,13 +92,13 @@ variable "cloud_image_path" {
 variable "win_server_image_path" {
   description = "Path to the golden Windows Server qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/win2k25.qcow2"
+  default     = "/opt/images/orig/windows-server-2022.qcow2"
 }
 
 variable "win11_image_path" {
   description = "Path to the golden Windows 11 qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/win11.qcow2"
+  default     = "/opt/images/orig/aliyah-win11.qcow2"
 }
 
 locals {
@@ -108,9 +110,10 @@ locals {
       disk_bus   = "sata"
       disk_dev   = "sda"
       nic        = "e1000e"
-      uefi       = true
-      loader     = "/usr/share/OVMF/OVMF_CODE_4M.ms.fd"
-      nvram_tmpl = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
+      # BIOS/MBR image: no UEFI, no OVMF, no NVRAM
+      uefi       = false
+      loader     = null
+      nvram_tmpl = null
       cloud_init = false
     }
     win11 = {
@@ -185,6 +188,31 @@ resource "docker_container" "service" {
   restart = "unless-stopped"
 }
 
+resource "libvirt_network" "corp" {
+  name      = "${var.student_name}-corp-lan"
+  autostart = true
+
+  forward = {
+    mode = "nat"
+  }
+
+  ips = [{
+    address = "192.168.${var.corp_octet}.1"
+    prefix  = 24
+    family  = "ipv4"
+    dhcp = {
+      ranges = [{
+        start = "192.168.${var.corp_octet}.100"
+        end   = "192.168.${var.corp_octet}.254"
+      }]
+    }
+  }]
+}
+
+resource "tls_private_key" "deploy" {
+  algorithm = "ED25519"
+}
+
 resource "libvirt_cloudinit_disk" "init" {
   for_each = { for k, v in local.vms : k => v if v.cloud_init }
 
@@ -217,10 +245,6 @@ resource "libvirt_volume" "ubuntu_base" {
       url = each.value.image
     }
   }
-}
-
-resource "tls_private_key" "deploy" {
-  algorithm = "ED25519"
 }
 
 resource "libvirt_volume" "vm_disk" {
@@ -259,7 +283,7 @@ resource "terraform_data" "windows_disk" {
 }
 
 resource "libvirt_domain" "windows" {
-  for_each = { for k, v in local.vms : k => v if v.uefi }
+  for_each = { for k, v in local.vms : k => v if !v.cloud_init }
 
   name        = each.key
   memory      = each.value.memory
@@ -269,27 +293,56 @@ resource "libvirt_domain" "windows" {
   autostart   = true
   running     = true
 
+  # FIX 1: host-passthrough. The libvirt default qemu64 CPU model
+  # lacks features Windows 11/Server 2025 need and the guest loops
+  # in "Preparing Automatic Repair" while the domain stays running.
+  cpu = {
+    mode = "host-passthrough"
+  }
+
+  clock = {
+    offset = "localtime"
+    timer  = [{ name = "hypervclock", present = "yes" }]
+  }
+
   features = {
     acpi = true
     apic = {}
-    smm  = { state = "on" }
+    smm  = each.value.uefi ? { state = "on" } : null
+    hyper_v = {
+      mode        = "custom"
+      relaxed     = { state = "on" }
+      vapic       = { state = "on" }
+      spinlocks   = { state = "on", retries = 4095 }
+      vp_index    = { state = "on" }
+      runtime     = { state = "on" }
+      synic       = { state = "on" }
+      stimer      = { state = "on", direct = { state = "on" } }
+      frequencies = { state = "on" }
+      tlb_flush   = { state = "on", direct = { state = "on" } }
+      ipi         = { state = "on" }
+      evmcs       = { state = "on" }
+    }
   }
 
   os = {
-    type             = "hvm"
-    type_arch        = "x86_64"
-    type_machine     = "q35"
-    firmware         = "efi"
-    loader           = each.value.loader
-    loader_readonly  = "yes"
-    loader_type      = "pflash"
-    loader_format    = "raw"
-    nv_ram = {
+    type            = "hvm"
+    type_arch       = "x86_64"
+    type_machine    = "q35"
+    # FIX 2: attach UEFI only when the OS profile asks for it. The
+    # Windows Server golden image is BIOS/MBR: OVMF reports "No
+    # bootable option or device was found" if firmware is forced.
+    firmware        = each.value.uefi ? "efi" : null
+    loader          = each.value.uefi ? each.value.loader : null
+    loader_readonly = each.value.uefi ? "yes" : null
+    loader_type     = each.value.uefi ? "pflash" : null
+    loader_format   = each.value.uefi ? "raw" : null
+    nv_ram = each.value.uefi ? {
       nv_ram          = "/var/lib/libvirt/qemu/nvram/${each.key}_VARS.fd"
       template        = each.value.nvram_tmpl
       template_format = "raw"
       format          = "raw"
-    }
+    } : null
     boot_devices = [{ dev = "hd" }]
   }
 
@@ -314,6 +367,16 @@ resource "libvirt_domain" "windows" {
     }]
     graphics = [{
       vnc = { auto_port = true }
+    }]
+    # TPM 2.0 emulator: Windows 11 enables Device Encryption on its
+    # own during setup. The volume boots under a fresh vTPM.
+    tpms = [{
+      model = "tpm-crb"
+      backend = {
+        emulator = {
+          version = "2.0"
+        }
+      }
     }]
     serials    = [{ type = "pty" }]
     consoles   = [{
@@ -398,27 +461,6 @@ resource "libvirt_domain" "ubuntu" {
   ]
 }
 
-resource "libvirt_network" "corp" {
-  name      = "${var.student_name}-corp-lan"
-  autostart = true
-
-  forward = {
-    mode = "nat"
-  }
-
-  ips = [{
-    address = "192.168.${var.corp_octet}.1"
-    prefix  = 24
-    family  = "ipv4"
-    dhcp = {
-      ranges = [{
-        start = "192.168.${var.corp_octet}.100"
-        end   = "192.168.${var.corp_octet}.254"
-      }]
-    }
-  }]
-}
-
 output "docker_services" {
   description = "Docker services deployed on the host"
   value = {
@@ -444,10 +486,9 @@ output "corp_network" {
   value       = libvirt_network.corp.name
 }
 
-# Outputs private key to save locally:
+# Optional: lets you save the SSH private key locally with
+# terraform output -raw deploy_private_key_pem > deploy_key
 output "deploy_private_key_pem" {
   value     = tls_private_key.deploy.private_key_pem
   sensitive = true
 }
-
-
