@@ -8,3 +8,5 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 hashed-pw.txt
+terraform.tfvars
+rose-thingy.txt
