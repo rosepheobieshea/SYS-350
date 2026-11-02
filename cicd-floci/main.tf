@@ -25,7 +25,6 @@ provider "aws" {
   # Skip real AWS validation
   skip_credentials_validation = true
   skip_metadata_api_check     = true
-  skip_requesting_account_id = true
   # Required for S3 path-style access
   s3_use_path_style = true
 }
@@ -42,7 +41,7 @@ variable "student_name" {
 }
 
 resource "aws_s3_bucket" "website" {
-  bucket = "${var.student_nam}-course-website"
+  bucket = "${var.student_name}-course-website"
 }
 
 resource "aws_s3_bucket_versioning" "website" {
