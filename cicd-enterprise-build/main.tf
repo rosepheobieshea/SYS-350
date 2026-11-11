@@ -1,27 +1,13 @@
-# main.tf: SYS-350 Enterprise Build, Part I (complete reference)
-
 terraform {
   required_providers {
     docker = {
       source  = "kreuzwerker/docker"
       version = "~> 3.0"
     }
-    libvirt = {
-      source  = "dmacvicar/libvirt"
-      version = "~> 0.9"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-  }
+ }
 }
 
 provider "docker" {
-}
-
-provider "libvirt" {
-  uri = "qemu:///system"
 }
 
 variable "student_name" {
@@ -84,90 +70,46 @@ variable "networks" {
   default     = ["devops", "internal", "web"]
 }
 
-variable "corp_octet" {
-  description = "Third octet of the KVM NAT subnet (192.168.CORP_OCTET.0/24). Student A: 50. Student B: 51."
-  type        = number
-  default     = 50
-
-  validation {
-    condition     = var.corp_octet >= 1 && var.corp_octet <= 254
-    error_message = "corp_octet must be between 1 and 254."
-  }
-}
-
+variable "bind_ip" {
 variable "cloud_image_path" {
+  description = "Host address that published ports bind to. Hardening for shared servers: set 127.0.0.1 and reach RDP through an SSH tunnel (ssh -L 3002:localhost:3002 for the win11 rdp_port) so the network never sees RDP."
   description = "Path to the Ubuntu cloud image on the hypervisor host"
   type        = string
-  default     = "/opt/images/ubuntu-26.04-server-cloudimg-amd64.img"
-}
-
-variable "win_server_image_path" {
-  description = "Path to the golden Windows Server qcow2 on the hypervisor host"
   type        = string
-  default     = "/opt/images/orig/windows-server-2022.qcow2"
-}
-
-variable "win11_image_path" {
-  description = "Path to the golden Windows 11 qcow2 on the hypervisor host"
-  type        = string
-  default     = "/opt/images/orig/aliyah-win11.qcow2"
-}
+  default     = "0.0.0.0"
 
 locals {
   os_defaults = {
-    win-server = {
-      image      = var.win_server_image_path
-      vcpu       = 2
-      memory_mb  = 2048
-      disk_bus   = "sata"
-      disk_dev   = "sda"
-      nic        = "e1000e"
-      # BIOS/MBR image: no UEFI, no OVMF, no NVRAM
-      uefi       = false
-      loader     = null
-      nvram_tmpl = null
-      cloud_init = false
-    }
-    win11 = {
-      image      = var.win11_image_path
-      vcpu       = 4
-      memory_mb  = 4096
-      disk_bus   = "sata"
-      disk_dev   = "sda"
-      nic        = "e1000e"
-      uefi       = true
-      loader     = "/usr/share/OVMF/OVMF_CODE_4M.ms.fd"
-      nvram_tmpl = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
-      cloud_init = false
-    }
-    ubuntu-server = {
-      image      = var.cloud_image_path
-      vcpu       = 2
-      memory_mb  = 2048
-      disk_bus   = "virtio"
-      disk_dev   = "vda"
-      nic        = "virtio"
-      uefi       = false
-      loader     = null
-      nvram_tmpl = null
-      cloud_init = true
-    }
-  }
+   win11 = {
+     version    = "11"
+     memory_mb  = 4096
+     vcpu       = 2
+     disk_gb    = 64
+   }
+   win2025 = {
+     version    = "2025"
+     memory_mb  = 4096
+     vcpu       = 2
+     disk_gb    = 64
+   }
+ }
 
-  # Merged VM map: student overrides win, profile defaults fill the rest
+  windows = { for name, cfg in var.vms : name => {
   vms = { for name, cfg in var.vms : name => {
     os         = cfg.os
+    version     = local.os_defaults[cfg.os].version
     image      = local.os_defaults[cfg.os].image
+    ram         = "${coalesce(cfg.memory_mb, local.os_defaults[cfg.os].memory_mb) / 1024}G"
     memory     = (coalesce(cfg.memory_mb, local.os_defaults[cfg.os].memory_mb)) * 1024
+    cpus        = tostring(coalesce(cfg.vcpu, local.os_defaults[cfg.os].vcpu))
     vcpu       = coalesce(cfg.vcpu, local.os_defaults[cfg.os].vcpu)
+    disk        = "${local.os_defaults[cfg.os].disk_gb}G"
     disk_bus   = local.os_defaults[cfg.os].disk_bus
+    rdp_port    = cfg.rdp_port
     disk_dev   = local.os_defaults[cfg.os].disk_dev
-    nic        = local.os_defaults[cfg.os].nic
-    uefi       = local.os_defaults[cfg.os].uefi
-    loader     = local.os_defaults[cfg.os].loader
-    nvram_tmpl = local.os_defaults[cfg.os].nvram_tmpl
-    cloud_init = local.os_defaults[cfg.os].cloud_init
-  } }
+    viewer_port = cfg.viewer_port
+
+ } }
 }
 
 resource "docker_network" "segment" {
@@ -192,297 +134,14 @@ resource "docker_container" "service" {
     content {
       internal = ports.value.internal
       external = ports.value.external
+      ip       = var.bind_ip
+      protocol = "tcp"
     }
   }
 
   env = [for k, v in each.value.env : "${k}=${v}"]
 
   restart = "unless-stopped"
-}
-
-resource "libvirt_network" "corp" {
-  name      = "${var.student_name}-corp-lan"
-  autostart = true
-
-  forward = {
-    mode = "nat"
-  }
-
-  ips = [{
-    address = "192.168.${var.corp_octet}.1"
-    prefix  = 24
-    family  = "ipv4"
-    dhcp = {
-      ranges = [{
-        start = "192.168.${var.corp_octet}.100"
-        end   = "192.168.${var.corp_octet}.254"
-      }]
-    }
-  }]
-}
-
-resource "tls_private_key" "deploy" {
-  algorithm = "ED25519"
-}
-
-resource "libvirt_cloudinit_disk" "init" {
-  for_each = { for k, v in local.vms : k => v if v.cloud_init }
-
-  name = "${each.key}-cloudinit.iso"
-
-  user_data = templatefile("${path.module}/cloud-init-server.yaml", {
-    hostname       = each.key
-    student_name   = var.student_name
-    ssh_public_key = tls_private_key.deploy.public_key_openssh
-  })
-
-  meta_data = yamlencode({
-    instance-id    = "${each.key}-cloudinit"
-    local-hostname = each.key
-  })
-}
-
-resource "libvirt_volume" "ubuntu_base" {
-  for_each = { for k, v in local.vms : k => v if v.cloud_init }
-
-  name = "${each.key}-base.qcow2"
-  pool = "default"
-
-  target = {
-    format = { type = "qcow2" }
-  }
-
-  create = {
-    content = {
-      url = each.value.image
-    }
-  }
-}
-
-resource "libvirt_volume" "vm_disk" {
-  for_each = { for k, v in local.vms : k => v if v.cloud_init }
-
-  name     = "${each.key}.qcow2"
-  pool     = "default"
-  capacity = 21474836480  # 20 GB thin provisioned
-
-  target = {
-    format = { type = "qcow2" }
-  }
-
-  backing_store = {
-    path   = libvirt_volume.ubuntu_base[each.key].path
-    format = { type = "qcow2" }
-  }
-}
-
-resource "terraform_data" "windows_disk" {
-  for_each = { for k, v in local.vms : k => v if !v.cloud_init }
-
-  input = {
-    name  = each.key
-    image = each.value.image
-  }
-
-  provisioner "local-exec" {
-    command = "sudo cp ${each.value.image} /var/lib/libvirt/images/${each.key}.qcow2"
-  }
-
-  provisioner "local-exec" {
-    when    = destroy
-    command = "sudo rm -f /var/lib/libvirt/images/${self.input.name}.qcow2"
-  }
-}
-
-resource "libvirt_domain" "windows" {
-  for_each = { for k, v in local.vms : k => v if !v.cloud_init }
-
-  name        = each.key
-  memory      = each.value.memory
-  memory_unit = "KiB"
-  vcpu        = each.value.vcpu
-  type        = "kvm"
-  autostart   = true
-  running     = true
-
-  # FIX 1: host-passthrough. The libvirt default qemu64 CPU model
-  # lacks features Windows 11/Server 2025 need and the guest loops
-  # in "Preparing Automatic Repair" while the domain stays running.
-  cpu = {
-    mode = "host-passthrough"
-  }
-
-  clock = {
-    offset = "localtime"
-    timer  = [{ name = "hypervclock", present = "yes" }]
-  }
-
-  features = {
-    acpi = true
-    apic = {}
-    smm  = each.value.uefi ? { state = "on" } : null
-    hyper_v = {
-      mode        = "custom"
-      relaxed     = { state = "on" }
-      vapic       = { state = "on" }
-      spinlocks   = { state = "on", retries = 4095 }
-      vp_index    = { state = "on" }
-      runtime     = { state = "on" }
-      synic       = { state = "on" }
-      stimer      = { state = "on", direct = { state = "on" } }
-      frequencies = { state = "on" }
-      tlb_flush   = { state = "on", direct = { state = "on" } }
-      ipi         = { state = "on" }
-      evmcs       = { state = "on" }
-    }
-  }
-
-  os = {
-    type            = "hvm"
-    type_arch       = "x86_64"
-    type_machine    = "q35"
-    # FIX 2: attach UEFI only when the OS profile asks for it. The
-    # Windows Server golden image is BIOS/MBR: OVMF reports "No
-    # bootable option or device was found" if firmware is forced.
-    firmware        = each.value.uefi ? "efi" : null
-    loader          = each.value.uefi ? each.value.loader : null
-    loader_readonly = each.value.uefi ? "yes" : null
-    loader_type     = each.value.uefi ? "pflash" : null
-    loader_format   = each.value.uefi ? "raw" : null
-    nv_ram = each.value.uefi ? {
-      nv_ram          = "/var/lib/libvirt/qemu/nvram/${each.key}_VARS.fd"
-      template        = each.value.nvram_tmpl
-      template_format = "raw"
-      format          = "raw"
-    } : null
-    boot_devices = [{ dev = "hd" }]
-  }
-
-  devices = {
-    disks = [{
-      source = {
-        file = {
-          file = "/var/lib/libvirt/images/${each.key}.qcow2"
-        }
-      }
-      driver = { type = "qcow2" }
-      target = {
-        dev = each.value.disk_dev
-        bus = each.value.disk_bus
-      }
-    }]
-    interfaces = [{
-      model = { type = each.value.nic }
-      source = {
-        network = { network = libvirt_network.corp.name }
-      }
-    }]
-    graphics = [{
-      vnc = { auto_port = true }
-    }]
-    # TPM 2.0 emulator: Windows 11 enables Device Encryption on its
-    # own during setup. The volume boots under a fresh vTPM.
-    tpms = [{
-      model = "tpm-crb"
-      backend = {
-        emulator = {
-          version = "2.0"
-        }
-      }
-    }]
-    serials    = [{ type = "pty" }]
-    consoles   = [{
-      type   = "pty"
-      target = { type = "serial", port = 0 }
-    }]
-  }
-
-  depends_on = [terraform_data.windows_disk]
-}
-
-resource "libvirt_domain" "ubuntu" {
-  for_each = { for k, v in local.vms : k => v if v.cloud_init }
-
-  name        = each.key
-  memory      = each.value.memory
-  memory_unit = "KiB"
-  vcpu        = each.value.vcpu
-  type        = "kvm"
-  autostart   = true
-  running     = true
-
-  features = {
-    acpi = true
-    apic = {}
-  }
-
-  os = {
-    type         = "hvm"
-    type_arch    = "x86_64"
-    type_machine = "q35"
-    boot_devices = [{ dev = "hd" }]
-  }
-
-  devices = {
-    disks = [
-      {
-        source = {
-          volume = {
-            pool   = "default"
-            volume = libvirt_volume.vm_disk[each.key].name
-          }
-        }
-        driver = { type = "qcow2" }
-        target = {
-          dev = each.value.disk_dev
-          bus = each.value.disk_bus
-        }
-      },
-      {
-        source = {
-          file = {
-            file = libvirt_cloudinit_disk.init[each.key].path
-          }
-        }
-        target = {
-          dev = "sdb"
-          bus = "sata"
-        }
-        device = "cdrom"
-      }
-    ]
-    interfaces = [{
-      model = { type = each.value.nic }
-      source = {
-        network = { network = libvirt_network.corp.name }
-      }
-    }]
-    graphics = [{
-      vnc = { auto_port = true }
-    }]
-    serials  = [{ type = "pty" }]
-    consoles = [{
-      type   = "pty"
-      target = { type = "serial", port = 0 }
-    }]
-  }
-
-  depends_on = [
-    libvirt_volume.vm_disk,
-    libvirt_cloudinit_disk.init
-  ]
-}
-
-output "docker_services" {
-  description = "Docker services deployed on the host"
-  value = {
-    for name, svc in var.services : name => {
-      container = "${var.student_name}-${name}"
-      image     = svc.image
-      network   = "${var.student_name}-${svc.network}-net"
-      ports     = [for p in svc.ports : "${p.external}->${p.internal}"]
-    }
-  }
 }
 
 resource "docker_volume" "win_storage" {
