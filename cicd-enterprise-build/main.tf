@@ -71,12 +71,9 @@ variable "networks" {
 }
 
 variable "bind_ip" {
-variable "cloud_image_path" {
-  description = "Host address that published ports bind to. Hardening for shared servers: set 127.0.0.1 and reach RDP through an SSH tunnel (ssh -L 3002:localhost:3002 for the win11 rdp_port) so the network never sees RDP."
-  description = "Path to the Ubuntu cloud image on the hypervisor host"
-  type        = string
   type        = string
   default     = "0.0.0.0"
+}
 
 locals {
   os_defaults = {
@@ -95,21 +92,13 @@ locals {
  }
 
   windows = { for name, cfg in var.vms : name => {
-  vms = { for name, cfg in var.vms : name => {
-    os         = cfg.os
     version     = local.os_defaults[cfg.os].version
-    image      = local.os_defaults[cfg.os].image
     ram         = "${coalesce(cfg.memory_mb, local.os_defaults[cfg.os].memory_mb) / 1024}G"
-    memory     = (coalesce(cfg.memory_mb, local.os_defaults[cfg.os].memory_mb)) * 1024
     cpus        = tostring(coalesce(cfg.vcpu, local.os_defaults[cfg.os].vcpu))
-    vcpu       = coalesce(cfg.vcpu, local.os_defaults[cfg.os].vcpu)
     disk        = "${local.os_defaults[cfg.os].disk_gb}G"
-    disk_bus   = local.os_defaults[cfg.os].disk_bus
     rdp_port    = cfg.rdp_port
-    disk_dev   = local.os_defaults[cfg.os].disk_dev
     viewer_port = cfg.viewer_port
-
- } }
+  } }
 }
 
 resource "docker_network" "segment" {
@@ -219,14 +208,3 @@ output "windows_containers" {
   }
 }
 
-output "corp_network" {
-  description = "KVM NAT network"
-  value       = libvirt_network.corp.name
-}
-
-# Optional: lets you save the SSH private key locally with
-# terraform output -raw deploy_private_key_pem > deploy_key
-output "deploy_private_key_pem" {
-  value     = tls_private_key.deploy.private_key_pem
-  sensitive = true
-}
